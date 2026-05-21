@@ -899,30 +899,31 @@ function loadMalaState() {
 let recognition = null;
 let micActive = false;
 let lastCountTime = 0;
-const COOLDOWN_MS = 600; // min ms between counts to avoid double-counting
+const COOLDOWN_MS = 400;
 
-// All variations of Raadha that speech recognition might return
-const RAADHA_WORDS = [
-  'radha','raadha','radhaa','radhey','raadhe','radhey','राधा','राधे','रादा','रादे',
-  'rada',' rada','raada','raadaa','radhaa','radhaji','radha ji','raadha raadha',
-  'radha radha','hare radha','jai radha','jai shri radha','राधे राधे','जय राधे'
-];
-
+// Very broad matching — catch any pronunciation
 function containsRadha(text) {
-  const t = text.toLowerCase().trim();
-  return RAADHA_WORDS.some(w => t.includes(w));
+  const t = text.toLowerCase().replace(/[^a-zा-ॿ]/g,' ');
+  // Hindi script
+  if(t.includes('राध') || t.includes('राधा') || t.includes('राधे')) return true;
+  // English phonetic — ra/raa + dh/d + a/aa/e
+  if(/r+a+a*d+h*[aei]/.test(t)) return true;
+  // Common misrecognitions
+  if(t.includes('rada') || t.includes('raada') || t.includes('radha') ||
+     t.includes('raadha') || t.includes('radhey') || t.includes('raadhe') ||
+     t.includes('raddha') || t.includes('radhe') || t.includes('rada') ||
+     t.includes('raha') || t.includes('raaha') || t.includes('lada') ||
+     t.includes('ladha') || t.includes('radaa') || t.includes('radhaa')) return true;
+  return false;
 }
 
 function countRadhaOccurrences(text) {
   const t = text.toLowerCase();
   let count = 0;
-  // Count how many times any radha word appears
-  for (const w of ['radha','raadha','राधा','राधे']) {
+  const patterns = ['radha','raadha','राधा','राधे','राध','rada','radhe','raadhe'];
+  for (const w of patterns) {
     let pos = 0;
-    while ((pos = t.indexOf(w, pos)) !== -1) {
-      count++;
-      pos += w.length;
-    }
+    while ((pos = t.indexOf(w, pos)) !== -1) { count++; pos += w.length; }
   }
   return Math.max(count, 1);
 }
@@ -930,12 +931,11 @@ function countRadhaOccurrences(text) {
 function setupRecognition() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) return null;
-
   const r = new SpeechRecognition();
   r.continuous = true;
   r.interimResults = true;
-  r.maxAlternatives = 3;
-  r.lang = 'hi-IN'; // Hindi — also catches Radha in English context
+  r.maxAlternatives = 5;
+  r.lang = 'hi-IN';
 
   r.onstart = () => {
     micActive = true;
@@ -944,73 +944,85 @@ function setupRecognition() {
   };
 
   r.onend = () => {
-    // Auto restart if still supposed to be active
-    if (micActive) {
-      setTimeout(() => { try { r.start(); } catch(e) {} }, 300);
-    }
+    if (micActive) setTimeout(() => { try { r.start(); } catch(e) {} }, 200);
   };
 
   r.onerror = (e) => {
-    if (e.error === 'no-speech') return; // ignore silence
+    console.log('Speech error:', e.error);
     if (e.error === 'not-allowed') {
       document.getElementById('micStatus').textContent = '❌ Mic permission nahi mili';
-      micActive = false;
-      updateMicUI(false);
-      return;
+      micActive = false; updateMicUI(false); return;
     }
-    // restart on other errors
-    setTimeout(() => { try { if(micActive) r.start(); } catch(err) {} }, 500);
+    if (e.error !== 'no-speech') {
+      setTimeout(() => { try { if(micActive) r.start(); } catch(err) {} }, 500);
+    }
   };
 
-  let lastProcessed = '';
-  r.onresult = (event) => {
-    let finalText = '';
-    let interimText = '';
+  // Track which result indices we've already counted to avoid double-counting
+  const countedIndices = new Set();
 
+  r.onresult = (event) => {
     for (let i = event.resultIndex; i < event.results.length; i++) {
       const result = event.results[i];
-      // Check all alternatives
+      // Get best transcript from all alternatives
+      let text = '';
       for (let j = 0; j < result.length; j++) {
-        const t = result[j].transcript;
-        if (result.isFinal) {
-          finalText += t + ' ';
-        } else {
-          interimText += t + ' ';
-        }
+        text += ' ' + result[j].transcript;
       }
-    }
+      text = text.trim();
+      if (!text) continue;
 
-    const textToCheck = (finalText || interimText).trim();
-    if (!textToCheck) return;
+      // Show live transcript
+      document.getElementById('micTranscript').textContent = '"' + text + '"';
+      console.log('Heard:', text, 'isFinal:', result.isFinal);
 
-    // Show what was heard
-    document.getElementById('micTranscript').textContent = '"' + textToCheck + '"';
-
-    // Only count on final results to avoid double-counting
-    if (finalText && finalText !== lastProcessed) {
-      lastProcessed = finalText;
-      if (containsRadha(finalText)) {
-        const now = Date.now();
-        if (now - lastCountTime > COOLDOWN_MS) {
-          const times = countRadhaOccurrences(finalText);
-          lastCountTime = now;
-          for (let i = 0; i < times; i++) {
-            setTimeout(() => malaTap(), i * 150);
+      if (result.isFinal) {
+        // Final result — count and mark as done
+        if (!countedIndices.has(i)) {
+          countedIndices.add(i);
+          const times = countRadhaOccurrences(text);
+          if (times > 0 && containsRadha(text)) {
+            const now = Date.now();
+            if (now - lastCountTime > COOLDOWN_MS) {
+              lastCountTime = now;
+              for (let k = 0; k < times; k++) setTimeout(() => malaTap(), k * 180);
+              flashTranscript();
+            }
           }
-          // Flash the transcript green
-          const el = document.getElementById('micTranscript');
-          el.style.color = '#7FD4A0';
-          el.style.fontSize = '15px';
-          setTimeout(() => {
-            el.style.color = 'rgba(200,150,12,0.7)';
-            el.style.fontSize = '13px';
-          }, 600);
+        }
+      } else {
+        // Interim — count immediately as each Radha word appears
+        // Split by common separators to catch each word individually
+        const words = text.toLowerCase().split(/[\s,।]+/);
+        for (const word of words) {
+          if (!word) continue;
+          if (containsRadha(word)) {
+            const now = Date.now();
+            if (now - lastCountTime > COOLDOWN_MS) {
+              lastCountTime = now;
+              malaTap();
+              flashTranscript();
+            }
+          }
         }
       }
     }
   };
-
   return r;
+}
+
+
+function flashTranscript() {
+  const el = document.getElementById('micTranscript');
+  if (!el) return;
+  el.style.color = '#7FD4A0';
+  el.style.fontSize = '17px';
+  el.style.fontWeight = '700';
+  setTimeout(() => {
+    el.style.color = 'rgba(200,150,12,0.7)';
+    el.style.fontSize = '13px';
+    el.style.fontWeight = 'normal';
+  }, 500);
 }
 
 function toggleMic() {
