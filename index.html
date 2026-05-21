@@ -530,7 +530,7 @@ async function getToken(){
 }
 async function sheetsGet(range){const tok=await getToken();const res=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}`,{headers:{Authorization:'Bearer '+tok}});return res.json();}
 async function sheetsUpdate(range,values){const tok=await getToken();const res=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=RAW`,{method:'PUT',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({range,majorDimension:'ROWS',values})});const d=await res.json();console.log('sheetsUpdate response:',JSON.stringify(d));if(d.error)throw new Error(d.error.message||JSON.stringify(d.error));return d;}
-async function sheetsAppend(range,values){const tok=await getToken();const res=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({range,majorDimension:'ROWS',values})});const d=await res.json();console.log('sheetsAppend response:',JSON.stringify(d));if(d.error)throw new Error(d.error.message||JSON.stringify(d.error));return d;}
+async function sheetsAppend(sheetName,values){const tok=await getToken();const appendRange=sheetName+'!A1';const res=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(appendRange)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({range:appendRange,majorDimension:'ROWS',values})});const d=await res.json();console.log('sheetsAppend response:',JSON.stringify(d));if(d.error)throw new Error(d.error.message||JSON.stringify(d.error));return d;}
 
 function showStep(id){document.querySelectorAll('.step').forEach(s=>s.classList.remove('active'));document.getElementById(id).classList.add('active');}
 function minsUntil(sess){const ist=nowIST();const s=new Date(ist);s.setHours(sess.hour,sess.min,0,0);return(s-ist)/60000;}
@@ -547,7 +547,7 @@ async function loadSessions(){
   const list=document.getElementById('sessionList');
   list.innerHTML='<div class="status"><span class="loader"></span> Load ho raha hai...</div>';
   try{
-    const[vd,ed]=await Promise.all([sheetsGet("'Votes'!A1:C1000"),sheetsGet("'Extra'!A1:C1000")]);
+    const[vd,ed]=await Promise.all([sheetsGet('Votes'),sheetsGet('Extra')]);
     const vRows=vd.values||[];const eRows=ed.values||[];
     const counts={};SESSIONS.forEach(s=>counts[s.key]=0);
     vRows.forEach(r=>{if(r[0]===activeDate()&&r[2])counts[r[2]]=(counts[r[2]]||0)+1;});
@@ -574,16 +574,16 @@ async function vote(sessKey){
   vs.innerHTML='<span class="loader"></span>';
   try{
     console.log('Voting for:', sessKey, 'date:', activeDate(), 'user:', userName);
-    const data=await sheetsGet("'Votes'!A1:C1000");
+    const data=await sheetsGet('Votes');
     console.log('Votes sheet data:', JSON.stringify(data));
     const rows=data.values||[];
     const ex=rows.findIndex(r=>r[0]===activeDate()&&r[1]===userName);
     console.log('Existing row index:', ex);
     if(ex>=0){
-      const r=await sheetsUpdate(`'Votes'!A${ex+1}:C${ex+1}`,[[activeDate(),userName,sessKey]]);
+      const r=await sheetsUpdate(`Votes!A${ex+1}:C${ex+1}`,[[activeDate(),userName,sessKey]]);
       console.log('Update result:', JSON.stringify(r));
     } else {
-      const r=await sheetsAppend("'Votes'!A:C",[[activeDate(),userName,sessKey]]);
+      const r=await sheetsAppend('Votes',[[activeDate(),userName,sessKey]]);
       console.log('Append result:', JSON.stringify(r));
     }
     mySession=sessKey;vs.textContent='Raadha Raadha! Vote ho gaya 🌸';vs.className='status ok';
@@ -606,7 +606,7 @@ async function loadOrder(){
   if(m>0&&m<=LOCK_MINUTES){cdDiv.style.display='block';cdDiv.innerHTML=`<div class="countdown">⏰ ${m} minute mein lock hoga</div>`;}
   else cdDiv.style.display='none';
   try{
-    const[vd,od,ed]=await Promise.all([sheetsGet("'Votes'!A1:C1000"),sheetsGet("'Order'!A1:D1000"),sheetsGet("'Extra'!A1:C1000")]);
+    const[vd,od,ed]=await Promise.all([sheetsGet('Votes'),sheetsGet('Order'),sheetsGet('Extra')]);
     const vRows=vd.values||[];const oRows=od.values||[];const eRows=ed.values||[];
     const voteCount=vRows.filter(r=>r[0]===activeDate()&&r[2]===mySession).length;
     const extraRow=eRows.find(r=>r[0]===activeDate()&&r[1]===mySession);
@@ -620,7 +620,7 @@ async function loadOrder(){
       let ns=total;while(slotMap[ns]&&slotMap[ns]!==userName&&ns>1)ns--;
       if(!slotMap[ns]||slotMap[ns]===userName){
         const mr=oRows.findIndex(r=>r[0]===activeDate()&&r[2]===mySession&&r[3]===userName);
-        if(mr>=0)await sheetsUpdate(`'Order'!A${mr+1}:D${mr+1}`,[[activeDate(),ns,mySession,userName]]);
+        if(mr>=0)await sheetsUpdate(`Order!A${mr+1}:D${mr+1}`,[[activeDate(),ns,mySession,userName]]);
         mySlot=ns;slotMap[ns]=userName;
       }
     }
@@ -651,21 +651,21 @@ async function loadOrder(){
 async function pickSlot(n){
   const ss=document.getElementById('slotStatus');ss.innerHTML='<span class="loader"></span>';
   try{
-    const od=await sheetsGet("'Order'!A1:D1000");const oRows=od.values||[];
+    const od=await sheetsGet('Order');const oRows=od.values||[];
     const already=oRows.find(r=>r[0]===activeDate()&&r[2]===mySession&&parseInt(r[1])===n&&r[3]);
     if(already){ss.textContent='Yeh spot le liya gaya, doosra chunein';ss.className='status err';setTimeout(loadOrder,1200);return;}
     const mr=oRows.findIndex(r=>r[0]===activeDate()&&r[2]===mySession&&r[3]===userName);
-    if(mr>=0)await sheetsUpdate(`'Order'!A${mr+1}:D${mr+1}`,[[activeDate(),n,mySession,userName]]);
-    else await sheetsAppend("'Order'!A:D",[[activeDate(),n,mySession,userName]]);
+    if(mr>=0)await sheetsUpdate(`Order!A${mr+1}:D${mr+1}`,[[activeDate(),n,mySession,userName]]);
+    else await sheetsAppend('Order',[[activeDate(),n,mySession,userName]]);
     mySlot=n;ss.textContent='Ho gaya! Raadha Raadha! 🌸';ss.className='status ok';setTimeout(loadOrder,700);
   }catch(e){ss.textContent='Error: '+e.message;ss.className='status err';}
 }
 
 async function releaseSlot(){
   try{
-    const od=await sheetsGet("'Order'!A1:D1000");const oRows=od.values||[];
+    const od=await sheetsGet('Order');const oRows=od.values||[];
     const mr=oRows.findIndex(r=>r[0]===activeDate()&&r[2]===mySession&&r[3]===userName);
-    if(mr>=0)await sheetsUpdate(`'Order'!A${mr+1}:D${mr+1}`,[[activeDate(),'',mySession,'']]);
+    if(mr>=0)await sheetsUpdate(`Order!A${mr+1}:D${mr+1}`,[[activeDate(),'',mySession,'']]);
     mySlot=null;loadOrder();
   }catch(e){}
 }
@@ -683,7 +683,7 @@ async function loadAdminPanel(){
   const div=document.getElementById('adminSessions');
   div.innerHTML='<div class="status"><span class="loader"></span> Load ho raha hai...</div>';
   try{
-    const[vd,od,ed]=await Promise.all([sheetsGet("'Votes'!A1:C1000"),sheetsGet("'Order'!A1:D1000"),sheetsGet("'Extra'!A1:C1000")]);
+    const[vd,od,ed]=await Promise.all([sheetsGet('Votes'),sheetsGet('Order'),sheetsGet('Extra')]);
     const vRows=vd.values||[];const oRows=od.values||[];const eRows=ed.values||[];
     div.innerHTML='';
     SESSIONS.forEach(s=>{
@@ -746,11 +746,11 @@ async function deleteItem(sessKey,idx){
   const st=document.getElementById('adminStatus');
   st.innerHTML='<span class="loader"></span> Hata raha hai...';
   try{
-    const od=await sheetsGet("'Order'!A1:D1000");const oRows=od.values||[];
-    const updates=[];oRows.forEach((r,i)=>{if(r[0]===activeDate()&&r[2]===sessKey)updates.push(sheetsUpdate(`'Order'!A${i+1}:D${i+1}`,[[activeDate(),'',sessKey,'']]))});
+    const od=await sheetsGet('Order');const oRows=od.values||[];
+    const updates=[];oRows.forEach((r,i)=>{if(r[0]===activeDate()&&r[2]===sessKey)updates.push(sheetsUpdate(`Order!A${i+1}:D${i+1}`,[[activeDate(),'',sessKey,'']]))});
     await Promise.all(updates);
     const newRows=dragState[sessKey].map((r,i)=>[activeDate(),i+1,sessKey,r[3]]);
-    if(newRows.length>0)await sheetsAppend("'Order'!A:D",newRows);
+    if(newRows.length>0)await sheetsAppend('Order',newRows);
     st.textContent=`"${name}" hata diya gaya 🌸`;st.className='status ok';
     setTimeout(()=>{st.textContent='';},2000);
   }catch(e){st.textContent='Error: '+e.message;st.className='status err';}
@@ -759,11 +759,11 @@ async function deleteItem(sessKey,idx){
 async function saveOrder(sessKey){
   const st=document.getElementById('adminStatus');st.innerHTML='<span class="loader"></span> Save ho raha hai...';
   try{
-    const od=await sheetsGet("'Order'!A1:D1000");const oRows=od.values||[];
-    const updates=[];oRows.forEach((r,i)=>{if(r[0]===activeDate()&&r[2]===sessKey)updates.push(sheetsUpdate(`'Order'!A${i+1}:D${i+1}`,[[activeDate(),'',sessKey,'']]))});
+    const od=await sheetsGet('Order');const oRows=od.values||[];
+    const updates=[];oRows.forEach((r,i)=>{if(r[0]===activeDate()&&r[2]===sessKey)updates.push(sheetsUpdate(`Order!A${i+1}:D${i+1}`,[[activeDate(),'',sessKey,'']]))});
     await Promise.all(updates);
     const newRows=dragState[sessKey].map((r,i)=>[activeDate(),i+1,sessKey,r[3]]);
-    if(newRows.length>0)await sheetsAppend("'Order'!A:D",newRows);
+    if(newRows.length>0)await sheetsAppend('Order',newRows);
     st.textContent='Kram save ho gaya! Raadha Raadha 🌸';st.className='status ok';
     setTimeout(()=>{st.textContent='';loadAdminPanel();},1800);
   }catch(e){st.textContent='Error: '+e.message;st.className='status err';}
@@ -773,10 +773,10 @@ async function saveExtra(sessKey){
   const st=document.getElementById('adminStatus');const val=parseInt(document.getElementById('extra_'+sessKey).value)||0;
   st.innerHTML='<span class="loader"></span>';
   try{
-    const ed=await sheetsGet("'Extra'!A1:C1000");const eRows=ed.values||[];
+    const ed=await sheetsGet('Extra');const eRows=ed.values||[];
     const er=eRows.findIndex(r=>r[0]===activeDate()&&r[1]===sessKey);
-    if(er>=0)await sheetsUpdate(`'Extra'!A${er+1}:C${er+1}`,[[activeDate(),sessKey,val]]);
-    else await sheetsAppend("'Extra'!A:C",[[activeDate(),sessKey,val]]);
+    if(er>=0)await sheetsUpdate(`Extra!A${er+1}:C${er+1}`,[[activeDate(),sessKey,val]]);
+    else await sheetsAppend('Extra',[[activeDate(),sessKey,val]]);
     st.textContent='Extra spots save ho gaye 🌸';st.className='status ok';
     setTimeout(()=>{st.textContent='';loadAdminPanel();},1500);
   }catch(e){st.textContent='Error: '+e.message;st.className='status err';}
