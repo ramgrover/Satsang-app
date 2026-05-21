@@ -312,6 +312,12 @@ button.gold-btn:hover{background:linear-gradient(135deg,#D4A010,var(--gold));box
 .mala-settings input{width:60px;margin-bottom:0;background:rgba(255,255,255,0.1);border-color:rgba(200,150,12,0.3);color:#fff;text-align:center;padding:6px 8px;font-size:14px}
 .bead{transition:fill 0.2s}
 .mala-vibrate{animation:malaVib 0.15s ease}
+
+@keyframes micPulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(240,100,100,0.4)}
+  50%{box-shadow:0 0 0 10px rgba(240,100,100,0)}
+}
+
 @keyframes malaVib{0%{transform:translate(-50%,-50%) scale(1)}40%{transform:translate(-50%,-50%) scale(0.92)}100%{transform:translate(-50%,-50%) scale(1)}}
 .mala-complete{
   position:absolute;inset:0;background:rgba(0,0,0,0.85);
@@ -442,6 +448,9 @@ button.gold-btn:hover{background:linear-gradient(135deg,#D4A010,var(--gold));box
           <button onclick="malaReset()" class="danger" style="background:rgba(163,45,45,0.2);border:1px solid rgba(240,149,149,0.4);color:#F09595;flex:2">🔄 Reset</button>
           <button onclick="malaNewMala()" class="gold-btn" style="flex:2">Agli Mala ▶</button>
         </div>
+        <button id="micBtn" onclick="toggleMic()" style="width:100%;margin-top:10px;padding:14px;border-radius:12px;font-size:16px;font-weight:600;background:rgba(255,255,255,0.07);border:1.5px solid rgba(200,150,12,0.4);color:rgba(255,255,255,0.7);">🎤 Auto Count — "Raadha" Sunna Shuru Karein</button>
+        <div id="micStatus" style="text-align:center;font-size:12px;color:rgba(255,255,255,0.4);margin-top:6px;min-height:18px;padding:0 8px"></div>
+        <div id="micTranscript" style="text-align:center;font-size:13px;color:rgba(200,150,12,0.7);margin-top:4px;min-height:18px;font-style:italic;padding:0 16px;word-break:break-word"></div>
         <div class="mala-settings">
           <span>Mala size:</span>
           <input type="number" id="malaSizeInput" value="108" min="1" max="1000" onchange="setMalaSize(this.value)"/>
@@ -531,7 +540,7 @@ async function sheetsGet(range){const tok=await getToken();const res=await fetch
 async function sheetsUpdate(range,values){const tok=await getToken();const res=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=RAW`,{method:'PUT',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({range,majorDimension:'ROWS',values})});const d=await res.json();console.log('sheetsUpdate response:',JSON.stringify(d));if(d.error)throw new Error(d.error.message||JSON.stringify(d.error));return d;}
 async function sheetsAppend(sheetName,values){const tok=await getToken();const appendRange=sheetName+'!A1';const res=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(appendRange)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({range:appendRange,majorDimension:'ROWS',values})});const d=await res.json();console.log('sheetsAppend response:',JSON.stringify(d));if(d.error)throw new Error(d.error.message||JSON.stringify(d.error));return d;}
 
-function showStep(id){document.querySelectorAll('.step').forEach(s=>s.classList.remove('active'));document.getElementById(id).classList.add('active');}
+// showStep defined in mic section below
 function minsUntil(sess){const ist=nowIST();const s=new Date(ist);s.setHours(sess.hour,sess.min,0,0);return(s-ist)/60000;}
 function isLocked(sess){if(isTomorrowMode())return false;return minsUntil(sess)<=LOCK_MINUTES;}
 
@@ -883,6 +892,182 @@ function loadMalaState() {
     }
   } catch(e) {}
   updateMalaUI();
+}
+
+
+// ── MIC / SPEECH RECOGNITION ─────────────────────────────
+let recognition = null;
+let micActive = false;
+let lastCountTime = 0;
+const COOLDOWN_MS = 600; // min ms between counts to avoid double-counting
+
+// All variations of Raadha that speech recognition might return
+const RAADHA_WORDS = [
+  'radha','raadha','radhaa','radhey','raadhe','radhey','राधा','राधे','रादा','रादे',
+  'rada',' rada','raada','raadaa','radhaa','radhaji','radha ji','raadha raadha',
+  'radha radha','hare radha','jai radha','jai shri radha','राधे राधे','जय राधे'
+];
+
+function containsRadha(text) {
+  const t = text.toLowerCase().trim();
+  return RAADHA_WORDS.some(w => t.includes(w));
+}
+
+function countRadhaOccurrences(text) {
+  const t = text.toLowerCase();
+  let count = 0;
+  // Count how many times any radha word appears
+  for (const w of ['radha','raadha','राधा','राधे']) {
+    let pos = 0;
+    while ((pos = t.indexOf(w, pos)) !== -1) {
+      count++;
+      pos += w.length;
+    }
+  }
+  return Math.max(count, 1);
+}
+
+function setupRecognition() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) return null;
+
+  const r = new SpeechRecognition();
+  r.continuous = true;
+  r.interimResults = true;
+  r.maxAlternatives = 3;
+  r.lang = 'hi-IN'; // Hindi — also catches Radha in English context
+
+  r.onstart = () => {
+    micActive = true;
+    updateMicUI(true);
+    document.getElementById('micStatus').textContent = '🟢 Sun raha hai... "Raadha" bolo';
+  };
+
+  r.onend = () => {
+    // Auto restart if still supposed to be active
+    if (micActive) {
+      setTimeout(() => { try { r.start(); } catch(e) {} }, 300);
+    }
+  };
+
+  r.onerror = (e) => {
+    if (e.error === 'no-speech') return; // ignore silence
+    if (e.error === 'not-allowed') {
+      document.getElementById('micStatus').textContent = '❌ Mic permission nahi mili';
+      micActive = false;
+      updateMicUI(false);
+      return;
+    }
+    // restart on other errors
+    setTimeout(() => { try { if(micActive) r.start(); } catch(err) {} }, 500);
+  };
+
+  let lastProcessed = '';
+  r.onresult = (event) => {
+    let finalText = '';
+    let interimText = '';
+
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const result = event.results[i];
+      // Check all alternatives
+      for (let j = 0; j < result.length; j++) {
+        const t = result[j].transcript;
+        if (result.isFinal) {
+          finalText += t + ' ';
+        } else {
+          interimText += t + ' ';
+        }
+      }
+    }
+
+    const textToCheck = (finalText || interimText).trim();
+    if (!textToCheck) return;
+
+    // Show what was heard
+    document.getElementById('micTranscript').textContent = '"' + textToCheck + '"';
+
+    // Only count on final results to avoid double-counting
+    if (finalText && finalText !== lastProcessed) {
+      lastProcessed = finalText;
+      if (containsRadha(finalText)) {
+        const now = Date.now();
+        if (now - lastCountTime > COOLDOWN_MS) {
+          const times = countRadhaOccurrences(finalText);
+          lastCountTime = now;
+          for (let i = 0; i < times; i++) {
+            setTimeout(() => malaTap(), i * 150);
+          }
+          // Flash the transcript green
+          const el = document.getElementById('micTranscript');
+          el.style.color = '#7FD4A0';
+          el.style.fontSize = '15px';
+          setTimeout(() => {
+            el.style.color = 'rgba(200,150,12,0.7)';
+            el.style.fontSize = '13px';
+          }, 600);
+        }
+      }
+    }
+  };
+
+  return r;
+}
+
+function toggleMic() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    alert('Aapka browser speech recognition support nahi karta. Chrome use karein.');
+    return;
+  }
+
+  if (micActive) {
+    // Stop
+    micActive = false;
+    if (recognition) { try { recognition.stop(); } catch(e) {} }
+    updateMicUI(false);
+    document.getElementById('micStatus').textContent = '⏸ Mic band hai';
+    document.getElementById('micTranscript').textContent = '';
+  } else {
+    // Start
+    recognition = setupRecognition();
+    if (!recognition) return;
+    micActive = true;
+    try {
+      recognition.start();
+    } catch(e) {
+      document.getElementById('micStatus').textContent = '❌ Error: ' + e.message;
+      micActive = false;
+    }
+  }
+}
+
+function updateMicUI(active) {
+  const btn = document.getElementById('micBtn');
+  if (!btn) return;
+  if (active) {
+    btn.innerHTML = '🔴 Sun raha hai... Band Karein';
+    btn.style.background = 'rgba(163,45,45,0.35)';
+    btn.style.borderColor = 'rgba(240,100,100,0.6)';
+    btn.style.color = '#F09595';
+    btn.style.animation = 'micPulse 1.5s ease-in-out infinite';
+  } else {
+    btn.innerHTML = '🎤 Auto Count — "Raadha" Sunna Shuru Karein';
+    btn.style.background = 'rgba(255,255,255,0.07)';
+    btn.style.borderColor = 'rgba(200,150,12,0.4)';
+    btn.style.color = 'rgba(255,255,255,0.7)';
+    btn.style.animation = '';
+  }
+}
+
+// Stop mic when leaving mala screen
+function showStep(id) {
+  if (id !== 'stepMala' && micActive) {
+    micActive = false;
+    if (recognition) { try { recognition.stop(); } catch(e) {} }
+    updateMicUI(false);
+  }
+  document.querySelectorAll('.step').forEach(s=>s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
 }
 
 // Load mala state when page loads
