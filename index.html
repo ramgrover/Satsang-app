@@ -1055,7 +1055,28 @@ function loadMalaState() {
 let recognition = null;
 let micActive = false;
 let lastCountTime = 0;
-const COOLDOWN_MS = 500;
+
+// Count exact occurrences of Radha — one per utterance
+function countExact(text) {
+  const t = text.toLowerCase();
+  let count = 0;
+  // Use regex to find each occurrence with word boundaries
+  const patterns = [
+    /r+a+a*d+h*[aeiouāī]+/g,  // radha, raadha, rada, raddha etc
+    /राध[ाे]*/g,               // Hindi
+    /रादh*/g,
+  ];
+  const seen = new Set();
+  for (const pat of patterns) {
+    const matches = t.match(pat) || [];
+    for (const m of matches) {
+      // Deduplicate overlapping matches
+      const idx = t.indexOf(m);
+      if (!seen.has(idx)) { seen.add(idx); count++; }
+    }
+  }
+  return count;
+}
 
 // Broad phonetic matching for Radha in any pronunciation
 function containsRadha(text) {
@@ -1099,30 +1120,59 @@ function setupRecognition() {
     }
   };
 
+  // Track last processed transcript to avoid double counting same text
+  let lastFinalTranscript = '';
+  let interimBuffer = '';
+
   r.onresult = (event) => {
-    const result = event.results[event.results.length - 1];
-    
-    // Collect text from ALL alternatives
-    let texts = [];
-    for (let j = 0; j < result.length; j++) {
-      texts.push(result[j].transcript.trim());
+    let interimText = '';
+    let finalText = '';
+
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const result = event.results[i];
+      const transcript = result[0].transcript.trim();
+      if (result.isFinal) {
+        finalText += transcript + ' ';
+      } else {
+        interimText += transcript + ' ';
+      }
     }
-    const displayText = texts[0];
-    const allText = texts.join(' ');
 
-    // Always show transcript
-    setTranscript('"' + displayText + '"');
-    console.log('Heard:', displayText, '| All alts:', allText);
+    // Show what is being heard
+    setTranscript('"' + (interimText || finalText).trim() + '"');
 
-    // Count on EVERY result (interim + final)
-    const now = Date.now();
-    if (now - lastCountTime < COOLDOWN_MS) return;
+    if (finalText) {
+      // FINAL: count exact number of Radha occurrences
+      const text = finalText.trim();
+      if (text === lastFinalTranscript) return; // exact duplicate, skip
+      lastFinalTranscript = text;
+      interimBuffer = ''; // clear interim since final arrived
 
-    if (containsRadha(allText)) {
-      lastCountTime = now;
-      malaTap();
-      flashTranscript();
-      console.log('✅ RAADHA COUNTED!');
+      const count = countExact(text);
+      console.log('FINAL:', text, '| Count:', count);
+      if (count > 0) {
+        for (let k = 0; k < count; k++) {
+          setTimeout(() => { malaTap(); flashTranscript(); }, k * 120);
+        }
+      }
+    } else if (interimText) {
+      // INTERIM: only count NEW words not already counted
+      const text = interimText.trim().toLowerCase();
+      // Find new part since last interim
+      const newPart = text.startsWith(interimBuffer)
+        ? text.slice(interimBuffer.length).trim()
+        : text;
+
+      if (newPart) {
+        const count = countExact(newPart);
+        console.log('INTERIM new:', newPart, '| Count:', count);
+        if (count > 0) {
+          interimBuffer = text; // mark as processed
+          for (let k = 0; k < count; k++) {
+            setTimeout(() => { malaTap(); flashTranscript(); }, k * 120);
+          }
+        }
+      }
     }
   };
 
