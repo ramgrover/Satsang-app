@@ -363,7 +363,6 @@ button.gold-btn:hover{background:linear-gradient(135deg,#D4A010,var(--gold));box
     <div class="card">
       <div class="sec-title">🕐 Kaunse Satsang Mein Aayenge?</div>
       <div id="sessionList"></div>
-      <div id="voteStatus" class="status"></div>
     </div>
   </div>
 
@@ -547,51 +546,40 @@ async function loadSessions(){
   const list=document.getElementById('sessionList');
   list.innerHTML='<div class="status"><span class="loader"></span> Load ho raha hai...</div>';
   try{
-    const[vd,ed]=await Promise.all([sheetsGet('Votes'),sheetsGet('Extra')]);
-    const vRows=vd.values||[];const eRows=ed.values||[];
-    const counts={};SESSIONS.forEach(s=>counts[s.key]=0);
-    vRows.forEach(r=>{if(r[0]===activeDate()&&r[2])counts[r[2]]=(counts[r[2]]||0)+1;});
+    const ed=await sheetsGet('Extra');
+    const eRows=ed.values||[];
     const extras={};eRows.forEach(r=>{if(r[0]===activeDate()&&r[1]&&r[2])extras[r[1]]=parseInt(r[2])||0;});
-    const myVote=vRows.find(r=>r[0]===activeDate()&&r[1]===userName);
-    mySession=myVote?myVote[2]:null;
     list.innerHTML='';
     SESSIONS.forEach(s=>{
-      const total=Math.max(counts[s.key],MIN_SPOTS)+(extras[s.key]||0);
       const locked=isLocked(s);
+      const extraSpots=extras[s.key]||0;
       const btn=document.createElement('button');
       btn.className='sess-btn'+(mySession===s.key?' selected':'');
-      btn.innerHTML=`<div><div class="stime">${s.time}${locked?'<span class="locked-badge">🔒 Lock</span>':''}</div><div class="slabel">${s.label}</div></div><span class="scount">${counts[s.key]} vote · ${total} spots</span>`;
-      if(!locked||mySession===s.key)btn.onclick=()=>vote(s.key);
+      btn.innerHTML=`<div><div class="stime">${s.time}${locked?'<span class="locked-badge">🔒 Lock</span>':''}</div><div class="slabel">${s.label}</div></div><span class="scount">${locked?'Locked':'Chunein ▶'}</span>`;
+      if(!locked){btn.onclick=()=>selectSession(s.key);}
       else btn.style.opacity='0.5';
       list.appendChild(btn);
     });
-    if(mySession){document.getElementById('voteStatus').textContent='Aapne haan kaha — neeche kram chunein 🌸';document.getElementById('voteStatus').className='status ok';showStep('stepOrder');loadOrder();}
-  }catch(e){list.innerHTML=`<div class="status err">Error: ${e.message}</div>`;}
+  }catch(e){
+    // Even if Extra fails, show sessions
+    document.getElementById('sessionList').innerHTML='';
+    SESSIONS.forEach(s=>{
+      const locked=isLocked(s);
+      const btn=document.createElement('button');
+      btn.className='sess-btn'+(mySession===s.key?' selected':'');
+      btn.innerHTML=`<div><div class="stime">${s.time}${locked?'<span class="locked-badge">🔒 Lock</span>':''}</div><div class="slabel">${s.label}</div></div><span class="scount">${locked?'Locked':'Chunein ▶'}</span>`;
+      if(!locked){btn.onclick=()=>selectSession(s.key);}
+      else btn.style.opacity='0.5';
+      document.getElementById('sessionList').appendChild(btn);
+    });
+  }
 }
 
-async function vote(sessKey){
-  const vs=document.getElementById('voteStatus');
-  vs.innerHTML='<span class="loader"></span>';
-  try{
-    console.log('Voting for:', sessKey, 'date:', activeDate(), 'user:', userName);
-    const data=await sheetsGet('Votes');
-    console.log('Votes sheet data:', JSON.stringify(data));
-    const rows=data.values||[];
-    const ex=rows.findIndex(r=>r[0]===activeDate()&&r[1]===userName);
-    console.log('Existing row index:', ex);
-    if(ex>=0){
-      const r=await sheetsUpdate(`Votes!A${ex+1}:C${ex+1}`,[[activeDate(),userName,sessKey]]);
-      console.log('Update result:', JSON.stringify(r));
-    } else {
-      const r=await sheetsAppend('Votes',[[activeDate(),userName,sessKey]]);
-      console.log('Append result:', JSON.stringify(r));
-    }
-    mySession=sessKey;vs.textContent='Raadha Raadha! Vote ho gaya 🌸';vs.className='status ok';
-    setTimeout(()=>{showStep('stepOrder');loadOrder();},800);
-  }catch(e){
-    console.error('Vote error:', e);
-    vs.textContent='Error: '+e.message;vs.className='status err';
-  }
+function selectSession(sessKey){
+  mySession=sessKey;
+  document.getElementById('voteStatus').textContent='';
+  showStep('stepOrder');
+  loadOrder();
 }
 
 function goBack(){mySession=null;showStep('stepSession');loadSessions();}
@@ -606,27 +594,17 @@ async function loadOrder(){
   if(m>0&&m<=LOCK_MINUTES){cdDiv.style.display='block';cdDiv.innerHTML=`<div class="countdown">⏰ ${m} minute mein lock hoga</div>`;}
   else cdDiv.style.display='none';
   try{
-    const[vd,od,ed]=await Promise.all([sheetsGet('Votes'),sheetsGet('Order'),sheetsGet('Extra')]);
-    const vRows=vd.values||[];const oRows=od.values||[];const eRows=ed.values||[];
-    const voteCount=vRows.filter(r=>r[0]===activeDate()&&r[2]===mySession).length;
+    const[od,ed]=await Promise.all([sheetsGet('Order'),sheetsGet('Extra')]);
+    const oRows=od.values||[];const eRows=ed.values||[];
     const extraRow=eRows.find(r=>r[0]===activeDate()&&r[1]===mySession);
     const extraSpots=extraRow?parseInt(extraRow[2])||0:0;
     const locked=isLocked(sess);
-    const total=locked?Math.max(voteCount,1)+extraSpots:Math.max(voteCount,MIN_SPOTS)+extraSpots;
+    const total=MIN_SPOTS+extraSpots;
     const todayOrders=oRows.filter(r=>r[0]===activeDate()&&r[2]===mySession&&r[1]&&r[3]);
     const slotMap={};todayOrders.forEach(r=>slotMap[parseInt(r[1])]=r[3]);
     mySlot=null;todayOrders.forEach(r=>{if(r[3]===userName)mySlot=parseInt(r[1]);});
-    if(locked&&mySlot&&mySlot>total){
-      let ns=total;while(slotMap[ns]&&slotMap[ns]!==userName&&ns>1)ns--;
-      if(!slotMap[ns]||slotMap[ns]===userName){
-        const mr=oRows.findIndex(r=>r[0]===activeDate()&&r[2]===mySession&&r[3]===userName);
-        if(mr>=0)await sheetsUpdate(`Order!A${mr+1}:D${mr+1}`,[[activeDate(),ns,mySession,userName]]);
-        mySlot=ns;slotMap[ns]=userName;
-      }
-    }
-    const ciDiv=document.getElementById('compressInfo');
-    if(locked&&voteCount<MIN_SPOTS){ciDiv.style.display='block';ciDiv.innerHTML=`<div class="compress-info">Aaj ${voteCount} sakhiyan — kram ${voteCount} tak ho gaya</div>`;}
-    else ciDiv.style.display='none';
+    // no auto-compress needed
+    document.getElementById('compressInfo').style.display='none';
     grid.innerHTML='';
     for(let i=1;i<=total;i++){
       const taken=slotMap[i];const isMe=mySlot===i;
@@ -683,28 +661,26 @@ async function loadAdminPanel(){
   const div=document.getElementById('adminSessions');
   div.innerHTML='<div class="status"><span class="loader"></span> Load ho raha hai...</div>';
   try{
-    const[vd,od,ed]=await Promise.all([sheetsGet('Votes'),sheetsGet('Order'),sheetsGet('Extra')]);
-    const vRows=vd.values||[];const oRows=od.values||[];const eRows=ed.values||[];
+    const[od,ed]=await Promise.all([sheetsGet('Order'),sheetsGet('Extra')]);
+    const oRows=od.values||[];const eRows=ed.values||[];
     div.innerHTML='';
     SESSIONS.forEach(s=>{
-      const voters=vRows.filter(r=>r[0]===activeDate()&&r[2]===s.key).map(r=>r[1]);
       const extraRow=eRows.find(r=>r[0]===activeDate()&&r[1]===s.key);
       const extraVal=extraRow?parseInt(extraRow[2])||0:0;
       const locked=isLocked(s);
-      const total=locked?Math.max(voters.length,1)+extraVal:Math.max(voters.length,MIN_SPOTS)+extraVal;
+      const total=MIN_SPOTS+extraVal;
       const pickedRows=oRows.filter(r=>r[0]===activeDate()&&r[2]===s.key&&r[1]&&r[3]).sort((a,b)=>parseInt(a[1])-parseInt(b[1]));
-      const pickedNames=pickedRows.map(r=>r[3]);
-      const notPicked=voters.filter(v=>!pickedNames.includes(v));
+      const notPicked=[];
       dragState[s.key]=[...pickedRows];
       const wrap=document.createElement('div');wrap.className='sess-admin';
       wrap.innerHTML=`
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
           <h4>${s.time} — ${s.label}${locked?' 🔒':''}</h4>
         </div>
-        <div style="font-size:14px;color:var(--text3);margin-bottom:8px">${voters.length} votes · ${pickedRows.length} picked · ${total} spots</div>
+        <div style="font-size:14px;color:var(--text3);margin-bottom:8px">${pickedRows.length} log chunein · ${total} spots</div>
         <div class="drag-list" id="dlist_${s.key}"></div>
         ${pickedRows.length>0?`<button class="gold-btn save-order-btn" onclick="saveOrder('${s.key}')">💾 Kram Save Karein</button>`:''}
-        ${notPicked.length>0?`<div class="not-picked-wrap"><div class="label">Vote diya, spot nahi chuna:</div>${notPicked.map(n=>`<span class="np-chip">${n}</span>`).join('')}</div>`:''}
+
         <div class="extra-row">
           <span>Extra spots:</span>
           <input type="number" id="extra_${s.key}" value="${extraVal}" min="0" max="99"/>
