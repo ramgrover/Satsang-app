@@ -586,19 +586,7 @@ button.gold-btn:hover{background:linear-gradient(135deg,#D4A010,var(--gold));box
 
         <div class="mic-info">
           <div id="micStatus"></div>
-          <!-- Live volume bar -->
-          <div style="width:100%;max-width:340px;height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden;margin:4px 0">
-            <div id="micLevelBar" style="height:100%;width:0%;background:linear-gradient(90deg,#C8960C,#F0C040);border-radius:3px;transition:width 0.05s"></div>
-          </div>
           <div id="micTranscript"></div>
-          <!-- Sensitivity tuner -->
-          <div id="sensitivityRow" style="display:none;width:100%;max-width:340px;margin-top:6px;align-items:center;gap:8px;font-size:12px;color:rgba(255,255,255,0.4)">
-            <span>🔇</span>
-            <input type="range" id="sensitivitySlider" min="1" max="20" value="8" style="flex:1;accent-color:#C8960C" oninput="setSensitivity(this.value)"/>
-            <span>🔊</span>
-            <span id="sensitivityVal" style="color:rgba(200,150,12,0.7);min-width:20px">8</span>
-          </div>
-          <div style="font-size:11px;color:rgba(255,255,255,0.25);margin-top:4px;text-align:center;cursor:pointer" onclick="toggleSensitivity()">⚙ Sensitivity adjust karein</div>
         </div>
 
         <div class="mala-settings">
@@ -1066,165 +1054,109 @@ function loadMalaState() {
 // ── MIC / SPEECH RECOGNITION ─────────────────────────────
 let recognition = null;
 let micActive = false;
+let processedFinals = new Set(); // track already-counted final results
 
-// ── AUDIO PEAK DETECTOR ────────────────────────────────
-// Detects each spoken syllable by finding PEAKS in volume envelope
-// One peak = one "Raadha" — works at any speed, any volume
-let audioCtx = null;
-let analyser = null;
-let micStream = null;
-let beatDetecting = false;
-let beatAnimFrame = null;
+function countRadhaInText(raw) {
+  const t = raw.toLowerCase()
+    .replace(/[।,.!?]/g, ' ')
+    .trim();
 
-// Dynamic threshold — auto-adjusts to the speaker's volume
-let dynamicFloor = 0;       // background noise floor
-let dynamicPeak  = 0;       // recent peak volume
-let lastCountTime = 0;
+  // Normalize all Radha forms to __R__
+  const norm = t
+    .replace(/राधे/g, ' __R__ ')
+    .replace(/राधा/g, ' __R__ ')
+    .replace(/राध/g,  ' __R__ ')
+    .replace(/\braadhe\b/g, ' __R__ ')
+    .replace(/\braadha\b/g, ' __R__ ')
+    .replace(/\bradhe\b/g,  ' __R__ ')
+    .replace(/\bradha\b/g,  ' __R__ ')
+    .replace(/\brada\b/g,   ' __R__ ')
+    .replace(/\brада\b/g,   ' __R__ ')
+    .replace(/\braha\b/g,   ' __R__ ')
+    .replace(/r[aā]+[aā]*d+h?[aāeē]+/g, ' __R__ ');
 
-// State machine: SILENCE → RISING → PEAK → FALLING → SILENCE
-const STATE = { SILENCE: 0, RISING: 1, PEAK: 2, FALLING: 3 };
-let state = STATE.SILENCE;
-let stateTime = 0;
-let risingMax = 0;
-
-// Min time between two counts in ms (lower = faster chanting allowed)
-const MIN_GAP_MS   = 180;
-// How much above noise floor triggers a syllable
-const PEAK_RATIO   = 2.8;
-// Min volume to even start detecting (avoids tiny noise)
-const MIN_VOL      = 0.015;
-
-function getRMS(buf) {
-  let sum = 0;
-  for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
-  return Math.sqrt(sum / buf.length);
+  const matches = norm.match(/__R__/g);
+  const n = matches ? matches.length : 0;
+  console.log('Text:', raw, '→ Count:', n);
+  return n;
 }
 
-function startAudioDetector(stream) {
-  audioCtx  = new (window.AudioContext || window.webkitAudioContext)();
-  analyser  = audioCtx.createAnalyser();
-  analyser.fftSize = 512;
-  analyser.smoothingTimeConstant = 0.6;
-  const src = audioCtx.createMediaStreamSource(stream);
-  src.connect(analyser);
-  const buf = new Float32Array(analyser.frequencyBinCount);
+function setupRecognition() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return null;
 
-  state = STATE.SILENCE;
-  dynamicFloor = 0;
-  dynamicPeak = 0;
-  risingMax = 0;
+  const r = new SR();
+  r.continuous    = true;
+  r.interimResults = true;
+  r.maxAlternatives = 5;
+  r.lang = 'hi-IN';
 
-  function tick() {
-    if (!beatDetecting) return;
-    beatAnimFrame = requestAnimationFrame(tick);
-    analyser.getFloatTimeDomainData(buf);
-    const vol = getRMS(buf);
-    const now = Date.now();
+  r.onstart = () => { updateMicUI(true); setMicStatus('🟢 Sun raha hai... "Raadha" bolo'); };
+  r.onend   = () => { if (micActive) setTimeout(() => { try { recognition.start(); } catch(e){} }, 100); };
+  r.onerror = (e) => {
+    if (e.error === 'not-allowed') { setMicStatus('❌ Mic permission nahi mili'); micActive = false; updateMicUI(false); }
+  };
 
-    // Update level bar
-    const bar = document.getElementById('micLevelBar');
-    if (bar) bar.style.width = Math.min(100, vol * 500) + '%';
+  // Track last interim to detect NEW words in real-time
+  let lastInterim = '';
 
-    // Slowly update noise floor (background level)
-    if (vol < MIN_VOL * 3) {
-      dynamicFloor = dynamicFloor * 0.98 + vol * 0.02;
+  r.onresult = (event) => {
+    let interimText = '';
+    let finalText   = '';
+
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      // Collect all alternatives for better matching
+      let allAlts = '';
+      for (let j = 0; j < event.results[i].length; j++) {
+        allAlts += ' ' + event.results[i][j].transcript;
+      }
+      if (event.results[i].isFinal) finalText  += allAlts + ' ';
+      else                           interimText += allAlts + ' ';
     }
 
-    const threshold = Math.max(MIN_VOL, dynamicFloor * PEAK_RATIO);
-    const slider = document.getElementById('sensitivitySlider');
-    const sensitivity = slider ? parseInt(slider.value) : 10;
-    // Slider 1-20: 1 = hard to trigger, 20 = very easy
-    const adjustedThreshold = threshold * (2.2 - sensitivity * 0.06);
+    if (finalText.trim()) {
+      // ── FINAL result ──
+      // Only process if we haven't seen this exact text before
+      const key = finalText.trim();
+      if (!processedFinals.has(key)) {
+        processedFinals.add(key);
+        lastInterim = ''; // reset interim tracker
 
-    // ── STATE MACHINE ──
-    switch(state) {
-
-      case STATE.SILENCE:
-        if (vol > adjustedThreshold) {
-          state = STATE.RISING;
-          stateTime = now;
-          risingMax = vol;
+        const n = countRadhaInText(key);
+        setTranscript('"' + event.results[event.results.length-1][0].transcript.trim() + '"');
+        if (n > 0) {
+          for (let k = 0; k < n; k++) setTimeout(() => { malaTap(); flashTranscript(); }, k * 200);
         }
-        break;
+      }
+    } else if (interimText.trim()) {
+      // ── INTERIM result ── find only NEW words since last interim
+      const current = interimText.trim().toLowerCase();
+      setTranscript('"' + event.results[event.results.length-1][0].transcript.trim() + '"');
 
-      case STATE.RISING:
-        if (vol > risingMax) {
-          risingMax = vol; // track rising peak
-        } else if (vol < risingMax * 0.75) {
-          // Volume started falling — we passed the peak!
-          state = STATE.FALLING;
-          stateTime = now;
-          // COUNT HERE — at the peak
-          if (now - lastCountTime >= MIN_GAP_MS) {
-            lastCountTime = now;
-            malaTap();
-            flashTranscript();
-            setTranscript('🌸');
-            setTimeout(() => setTranscript(''), 300);
-            console.log('PEAK counted! vol:', risingMax.toFixed(3), 'thresh:', adjustedThreshold.toFixed(3));
-          }
-        } else if (now - stateTime > 800) {
-          // Stuck rising too long — long held note, count once and reset
-          if (now - lastCountTime >= MIN_GAP_MS) {
-            lastCountTime = now;
-            malaTap();
-            flashTranscript();
-          }
-          state = STATE.FALLING;
-          stateTime = now;
-        }
-        break;
+      // Get only the new portion of text
+      let newPart = current;
+      if (lastInterim && current.startsWith(lastInterim)) {
+        newPart = current.slice(lastInterim.length).trim();
+      } else if (lastInterim && current.length > lastInterim.length) {
+        // Find common prefix
+        let i = 0;
+        while (i < lastInterim.length && i < current.length && lastInterim[i] === current[i]) i++;
+        newPart = current.slice(i).trim();
+      }
 
-      case STATE.FALLING:
-        if (vol < adjustedThreshold * 0.5) {
-          state = STATE.SILENCE; // back to silence, ready for next
-          risingMax = 0;
-        } else if (vol > risingMax * 0.9) {
-          // New rising within same breath — new syllable!
-          state = STATE.RISING;
-          stateTime = now;
-          risingMax = vol;
-        } else if (now - stateTime > 400) {
-          state = STATE.SILENCE; // timeout back to silence
-          risingMax = 0;
+      if (newPart.length > 2) {
+        const n = countRadhaInText(newPart);
+        if (n > 0) {
+          lastInterim = current; // mark as processed up to here
+          for (let k = 0; k < n; k++) setTimeout(() => { malaTap(); flashTranscript(); }, k * 200);
+        } else {
+          lastInterim = current; // still update tracker even if no radha
         }
-        break;
+      }
     }
-  }
-  tick();
-}
+  };
 
-function stopAudioDetector() {
-  beatDetecting = false;
-  if (beatAnimFrame) cancelAnimationFrame(beatAnimFrame);
-  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
-  if (audioCtx)  { audioCtx.close(); audioCtx = null; }
-  analyser = null;
-  const bar = document.getElementById('micLevelBar');
-  if (bar) bar.style.width = '0%';
-}
-
-async function toggleMic() {
-  if (micActive) {
-    micActive = false;
-    beatDetecting = false;
-    stopAudioDetector();
-    updateMicUI(false);
-    setMicStatus('⏸ Mic band hai');
-    setTranscript('');
-  } else {
-    try {
-      micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      micActive = true;
-      beatDetecting = true;
-      startAudioDetector(micStream);
-      updateMicUI(true);
-      setMicStatus('🟢 Sun raha hai — "Raadha" bolo');
-    } catch(e) {
-      setMicStatus('❌ Mic permission nahi mili');
-      console.error(e);
-    }
-  }
+  return r;
 }
 
 function flashTranscript() {
@@ -1233,11 +1165,30 @@ function flashTranscript() {
   el.style.color = '#7FD4A0';
   el.style.fontSize = '18px';
   el.style.fontWeight = '700';
-  setTimeout(() => { el.style.color='rgba(200,150,12,0.7)'; el.style.fontSize='14px'; el.style.fontWeight='normal'; el.textContent=''; }, 600);
+  setTimeout(() => { el.style.color='rgba(200,150,12,0.7)'; el.style.fontSize='14px'; el.style.fontWeight='normal'; }, 600);
 }
 
 function setMicStatus(t)  { const el=document.getElementById('micStatus');    if(el) el.textContent=t; }
 function setTranscript(t) { const el=document.getElementById('micTranscript'); if(el) el.textContent=t; }
+
+function toggleMic() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { alert('Chrome browser use karein — speech recognition ke liye'); return; }
+  if (micActive) {
+    micActive = false;
+    try { recognition.stop(); } catch(e) {}
+    updateMicUI(false);
+    setMicStatus('⏸ Mic band hai');
+    setTranscript('');
+    processedFinals.clear();
+  } else {
+    micActive = true;
+    processedFinals.clear();
+    recognition = setupRecognition();
+    try { recognition.start(); }
+    catch(e) { setMicStatus('❌ '+e.message); micActive=false; updateMicUI(false); }
+  }
+}
 
 function updateMicUI(active) {
   const btn = document.getElementById('micBtn');
@@ -1255,30 +1206,15 @@ function updateMicUI(active) {
   }
 }
 
-// Stop mic on navigation
 function showStep(id) {
   if (id !== 'stepMala' && micActive) {
     micActive = false;
-    beatDetecting = false;
-    stopAudioDetector();
+    try { recognition.stop(); } catch(e) {}
     updateMicUI(false);
+    processedFinals.clear();
   }
   document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
-}
-
-
-function setSensitivity(val) {
-  // slider 1-20 maps to threshold 0.30 (quiet) down to 0.05 (loud room)
-  const v = parseInt(val);
-  window.BEAT_THRESHOLD_DYN = 0.32 - (v * 0.014);
-  document.getElementById('sensitivityVal').textContent = v;
-  console.log('Threshold set to:', window.BEAT_THRESHOLD_DYN.toFixed(3));
-}
-
-function toggleSensitivity() {
-  const row = document.getElementById('sensitivityRow');
-  if (row) row.style.display = row.style.display === 'none' ? 'flex' : 'none';
 }
 
 // Load mala state when page loads
