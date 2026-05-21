@@ -1067,68 +1067,128 @@ function loadMalaState() {
 let recognition = null;
 let micActive = false;
 
-// ── AUDIO BEAT DETECTOR ────────────────────────────────
-// Detects each spoken syllable burst (one "Raadha" = one burst)
+// ── AUDIO PEAK DETECTOR ────────────────────────────────
+// Detects each spoken syllable by finding PEAKS in volume envelope
+// One peak = one "Raadha" — works at any speed, any volume
 let audioCtx = null;
 let analyser = null;
 let micStream = null;
 let beatDetecting = false;
 let beatAnimFrame = null;
 
-// Tunable params
-const BEAT_THRESHOLD  = 0.18;  // volume must exceed this to count (0-1)
-const BEAT_COOLDOWN   = 280;   // min ms between counts (adjust for chant speed)
-const SILENCE_RESET   = 120;   // ms of silence before next beat is allowed
-let lastBeatTime      = 0;
-let inBeat            = false;
-let silenceTimer      = null;
+// Dynamic threshold — auto-adjusts to the speaker's volume
+let dynamicFloor = 0;       // background noise floor
+let dynamicPeak  = 0;       // recent peak volume
+let lastCountTime = 0;
+
+// State machine: SILENCE → RISING → PEAK → FALLING → SILENCE
+const STATE = { SILENCE: 0, RISING: 1, PEAK: 2, FALLING: 3 };
+let state = STATE.SILENCE;
+let stateTime = 0;
+let risingMax = 0;
+
+// Min time between two counts in ms (lower = faster chanting allowed)
+const MIN_GAP_MS   = 180;
+// How much above noise floor triggers a syllable
+const PEAK_RATIO   = 2.8;
+// Min volume to even start detecting (avoids tiny noise)
+const MIN_VOL      = 0.015;
+
+function getRMS(buf) {
+  let sum = 0;
+  for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+  return Math.sqrt(sum / buf.length);
+}
 
 function startAudioDetector(stream) {
   audioCtx  = new (window.AudioContext || window.webkitAudioContext)();
   analyser  = audioCtx.createAnalyser();
-  analyser.fftSize = 256;
-  analyser.smoothingTimeConstant = 0.5;
+  analyser.fftSize = 512;
+  analyser.smoothingTimeConstant = 0.6;
   const src = audioCtx.createMediaStreamSource(stream);
   src.connect(analyser);
-
   const buf = new Float32Array(analyser.frequencyBinCount);
 
-  function getRMS() {
-    analyser.getFloatTimeDomainData(buf);
-    let sum = 0;
-    for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
-    return Math.sqrt(sum / buf.length);
-  }
+  state = STATE.SILENCE;
+  dynamicFloor = 0;
+  dynamicPeak = 0;
+  risingMax = 0;
 
   function tick() {
     if (!beatDetecting) return;
     beatAnimFrame = requestAnimationFrame(tick);
-
-    const vol = getRMS();
+    analyser.getFloatTimeDomainData(buf);
+    const vol = getRMS(buf);
     const now = Date.now();
 
-    // Update mic level bar
+    // Update level bar
     const bar = document.getElementById('micLevelBar');
-    if (bar) bar.style.width = Math.min(100, vol * 400) + '%';
+    if (bar) bar.style.width = Math.min(100, vol * 500) + '%';
 
-    const threshold = window.BEAT_THRESHOLD_DYN || BEAT_THRESHOLD;
-    if (vol > threshold) {
-      if (!inBeat && (now - lastBeatTime) > BEAT_COOLDOWN) {
-        // New beat detected!
-        inBeat = true;
-        lastBeatTime = now;
-        malaTap();
-        flashTranscript();
-        setTranscript('🌸 Raadha!');
-        console.log('BEAT detected, vol:', vol.toFixed(3));
-      }
-      // Clear any silence timer
-      if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
-    } else {
-      // Below threshold — start silence reset timer
-      if (inBeat && !silenceTimer) {
-        silenceTimer = setTimeout(() => { inBeat = false; silenceTimer = null; }, SILENCE_RESET);
-      }
+    // Slowly update noise floor (background level)
+    if (vol < MIN_VOL * 3) {
+      dynamicFloor = dynamicFloor * 0.98 + vol * 0.02;
+    }
+
+    const threshold = Math.max(MIN_VOL, dynamicFloor * PEAK_RATIO);
+    const slider = document.getElementById('sensitivitySlider');
+    const sensitivity = slider ? parseInt(slider.value) : 10;
+    // Slider 1-20: 1 = hard to trigger, 20 = very easy
+    const adjustedThreshold = threshold * (2.2 - sensitivity * 0.06);
+
+    // ── STATE MACHINE ──
+    switch(state) {
+
+      case STATE.SILENCE:
+        if (vol > adjustedThreshold) {
+          state = STATE.RISING;
+          stateTime = now;
+          risingMax = vol;
+        }
+        break;
+
+      case STATE.RISING:
+        if (vol > risingMax) {
+          risingMax = vol; // track rising peak
+        } else if (vol < risingMax * 0.75) {
+          // Volume started falling — we passed the peak!
+          state = STATE.FALLING;
+          stateTime = now;
+          // COUNT HERE — at the peak
+          if (now - lastCountTime >= MIN_GAP_MS) {
+            lastCountTime = now;
+            malaTap();
+            flashTranscript();
+            setTranscript('🌸');
+            setTimeout(() => setTranscript(''), 300);
+            console.log('PEAK counted! vol:', risingMax.toFixed(3), 'thresh:', adjustedThreshold.toFixed(3));
+          }
+        } else if (now - stateTime > 800) {
+          // Stuck rising too long — long held note, count once and reset
+          if (now - lastCountTime >= MIN_GAP_MS) {
+            lastCountTime = now;
+            malaTap();
+            flashTranscript();
+          }
+          state = STATE.FALLING;
+          stateTime = now;
+        }
+        break;
+
+      case STATE.FALLING:
+        if (vol < adjustedThreshold * 0.5) {
+          state = STATE.SILENCE; // back to silence, ready for next
+          risingMax = 0;
+        } else if (vol > risingMax * 0.9) {
+          // New rising within same breath — new syllable!
+          state = STATE.RISING;
+          stateTime = now;
+          risingMax = vol;
+        } else if (now - stateTime > 400) {
+          state = STATE.SILENCE; // timeout back to silence
+          risingMax = 0;
+        }
+        break;
     }
   }
   tick();
@@ -1138,7 +1198,7 @@ function stopAudioDetector() {
   beatDetecting = false;
   if (beatAnimFrame) cancelAnimationFrame(beatAnimFrame);
   if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
-  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  if (audioCtx)  { audioCtx.close(); audioCtx = null; }
   analyser = null;
   const bar = document.getElementById('micLevelBar');
   if (bar) bar.style.width = '0%';
