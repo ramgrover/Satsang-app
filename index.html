@@ -17,13 +17,17 @@
 *{box-sizing:border-box;margin:0;padding:0}
 body{
   font-family:'Noto Sans Devanagari',system-ui,sans-serif;
-  background:var(--cream);
+  background:#FFF8EE;
   color:var(--text);
   min-height:100vh;
-  background-image:
-    radial-gradient(ellipse at 20% 0%,rgba(200,150,12,0.08) 0%,transparent 60%),
-    radial-gradient(ellipse at 80% 100%,rgba(123,29,29,0.07) 0%,transparent 60%);
 }
+.bg-overlay{
+  position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    linear-gradient(180deg,rgba(255,248,238,0.88) 0%,rgba(255,248,238,0.92) 100%),
+    url('./radha-krishna.jpg') center/cover no-repeat;
+}
+.header,.devo-banner,.app{position:relative;z-index:1}
 
 /* ─── FLORAL BORDER SVG BG ─── */
 .floral-top{width:100%;text-align:center;padding:8px 0 0;opacity:0.55;font-size:22px;letter-spacing:6px;color:var(--gold)}
@@ -31,45 +35,38 @@ body{
 /* ─── HEADER ─── */
 .header{
   text-align:center;
-  padding:1rem 1rem 1.25rem;
+  padding:12px 16px 10px;
   background:linear-gradient(160deg,#7B1D1D 0%,#4A2060 50%,#7B1D1D 100%);
   position:relative;overflow:hidden;
+  box-shadow:0 2px 12px rgba(0,0,0,0.3);
 }
 .header::before{
   content:'';position:absolute;inset:0;
-  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Ccircle cx='30' cy='30' r='28' fill='none' stroke='rgba(240,192,64,0.12)' stroke-width='1'/%3E%3Ccircle cx='30' cy='30' r='20' fill='none' stroke='rgba(240,192,64,0.08)' stroke-width='1'/%3E%3C/svg%3E") repeat;
-  opacity:0.4;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Ccircle cx='30' cy='30' r='28' fill='none' stroke='rgba(240,192,64,0.1)' stroke-width='1'/%3E%3C/svg%3E") repeat;
+  opacity:0.3;
 }
 .header-inner{position:relative;z-index:1}
-.header-lotus{font-size:28px;display:block;margin-bottom:2px;filter:drop-shadow(0 1px 4px rgba(240,192,64,0.5))}
 .header h1{
   font-family:'Cinzel',serif;
-  font-size:26px;font-weight:600;
+  font-size:22px;font-weight:600;
   color:var(--gold-light);
-  letter-spacing:3px;
+  letter-spacing:2px;
   text-shadow:0 2px 8px rgba(0,0,0,0.4);
   margin-bottom:2px;
 }
 .header .sanskrit{
   font-family:'Tiro Devanagari Hindi',serif;
-  font-size:13px;color:rgba(255,255,255,0.7);
-  letter-spacing:1px;margin-bottom:6px;
+  font-size:12px;color:rgba(255,255,255,0.6);
+  letter-spacing:0.5px;margin-bottom:6px;
 }
 .clock-box{
-  display:inline-block;
+  display:inline-flex;align-items:center;gap:6px;
   background:rgba(0,0,0,0.3);
-  border:1px solid rgba(240,192,64,0.4);
-  border-radius:20px;padding:4px 16px;
-  margin-bottom:4px;
+  border:1px solid rgba(240,192,64,0.3);
+  border-radius:20px;padding:3px 14px;
 }
-#liveClock{font-size:20px;font-weight:600;color:var(--gold-light);letter-spacing:2px;font-variant-numeric:tabular-nums}
-#dateStr{font-size:12px;color:rgba(255,255,255,0.65);margin-top:2px}
-.divider-gold{
-  display:flex;align-items:center;gap:8px;
-  padding:10px 16px 0;position:relative;z-index:1;
-}
-.divider-gold::before,.divider-gold::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,transparent,rgba(240,192,64,0.5),transparent)}
-.divider-gold span{color:var(--gold-light);font-size:16px}
+.clock-sep{color:rgba(255,255,255,0.3)}
+#liveClock{font-size:16px;font-weight:600;color:var(--gold-light);letter-spacing:1px;font-variant-numeric:tabular-nums}
 
 /* ─── APP BODY ─── */
 .app{padding:1.25rem 1rem 3rem;max-width:480px;margin:0 auto}
@@ -260,13 +257,19 @@ button.gold-btn:hover{background:linear-gradient(135deg,#D4A010,var(--gold));box
 
 /* ─── DECORATIVE BANNER ─── */
 .devo-banner{
-  text-align:center;padding:10px 16px;
-  background:linear-gradient(90deg,transparent,rgba(200,150,12,0.1),transparent);
-  border-top:1px solid var(--border);border-bottom:1px solid var(--border);
-  margin-bottom:1rem;
+  overflow:hidden;white-space:nowrap;
+  background:linear-gradient(90deg,#7B1D1D,#4A2060,#7B1D1D);
+  border-bottom:1px solid rgba(240,192,64,0.2);
+  margin-bottom:0;padding:5px 0;
   font-family:'Tiro Devanagari Hindi',serif;
-  font-size:14px;color:var(--text2);letter-spacing:1px;
+  font-size:12px;color:var(--gold-light);letter-spacing:0.5px;
 }
+.marquee-inner{
+  display:inline-block;
+  animation:marquee 22s linear infinite;
+  padding-left:100%;
+}
+@keyframes marquee{from{transform:translateX(0)}to{transform:translateX(-100%)}}
 
 /* ─── MALA COUNTER ─── */
 .mala-screen{
@@ -436,25 +439,73 @@ button.gold-btn:hover{background:linear-gradient(135deg,#D4A010,var(--gold));box
   border-radius:50%;animation:fadeIn 0.3s ease;
 }
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+
+
+
+
+
+
+
+
+/* ── CARD GLOW ── */
+.card{transition:box-shadow 0.3s}
+.card:hover{box-shadow:0 4px 24px rgba(200,150,12,0.15)}
+
+.app{padding-bottom:20px}
+
+/* ── SESSION CARD ICONS ── */
+.sess-icon{font-size:28px;margin-right:10px}
+
+/* ── ANIMATED DIVIDER ── */
+.gold-divider{
+  display:flex;align-items:center;gap:8px;margin:8px 0 16px;
+  color:var(--gold);font-size:14px;letter-spacing:3px;
+}
+.gold-divider::before,.gold-divider::after{
+  content:'';flex:1;height:1px;
+  background:linear-gradient(90deg,transparent,var(--gold-border),transparent);
+}
+
+/* ── SLOT GRID LARGE ── */
+.slot{min-height:68px}
+.slot .snum{font-size:20px}
+
+/* ── PULSE RING on selected slot ── */
+.slot.mine::after{
+  content:'';position:absolute;inset:-3px;border-radius:12px;
+  border:2px solid var(--gold);animation:pulseRing 2s ease-in-out infinite;
+}
+.slot{position:relative}
+@keyframes pulseRing{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.4;transform:scale(1.04)}}
+
+/* ── BIGGER TEXT for older readers ── */
+.sess-btn .stime{font-size:20px}
+.sess-btn .slabel{font-size:14px}
+.order-list li{font-size:16px;padding:12px 14px}
+.badge{width:34px;height:34px;font-size:13px}
+input[type=text],input[type=password],input[type=number]{font-size:17px;padding:13px 14px}
+button{font-size:15px}
+.sec-title{font-size:13px;margin-bottom:14px}
+
 </style>
 </head>
 <body>
+<div class="bg-overlay"></div>
 
 <!-- HEADER -->
 <div class="header">
   <div class="header-inner">
-    <span class="header-lotus">🪷</span>
-    <h1>Raadha Raadha</h1>
-    <div class="sanskrit">श्री राधा रानी की सखियों का सत्संग</div>
+    <h1>🪷 Raadha Raadha 🪷</h1>
+    <div class="sanskrit">श्री हरिवंश चरण सेवा • सखियों का सत्संग</div>
     <div class="clock-box">
-      <div id="liveClock">--:--:-- --</div>
+      <span id="liveClock">--:--:--</span>
+      <span class="clock-sep">•</span>
+      <span id="dateStr" style="font-size:11px;color:rgba(255,255,255,0.6)"></span>
     </div>
-    <div id="dateStr"></div>
-    <div class="divider-gold"><span>✦</span></div>
   </div>
 </div>
 
-<div class="devo-banner">🌸 जय श्री राधे • जय श्री कृष्णा • जय प्रेमानंद महाराज 🌸</div>
+<div class="devo-banner"><span class="marquee-inner">🌸 जय श्री राधे &nbsp;•&nbsp; जय श्री कृष्णा &nbsp;•&nbsp; श्री हरिवंश चरण सेवा &nbsp;•&nbsp; राधा रानी की जय &nbsp;•&nbsp; निकुंज रानी की जय &nbsp;•&nbsp; जय जय श्री राधे 🌸 &nbsp;&nbsp;&nbsp;</span></div>
 
 <div class="app">
 
@@ -481,6 +532,10 @@ button.gold-btn:hover{background:linear-gradient(135deg,#D4A010,var(--gold));box
       <div class="sec-title">🕐 Kaunse Satsang Mein Aayenge?</div>
       <div id="sessionList"></div>
     </div>
+    <div style="display:flex;gap:10px;margin-top:4px">
+      <button onclick="showStep('stepName')" style="flex:1;padding:12px;border-radius:10px;border:1px solid var(--border);background:var(--cream2);color:var(--text3);font-size:15px">← Wapas</button>
+      <button onclick="showStep('stepAdmin')" style="flex:1;padding:12px;border-radius:10px;border:1px solid var(--purple-light);background:var(--purple-pale);color:var(--purple);font-size:15px">⚙️ Admin</button>
+    </div>
   </div>
 
   <!-- Step 3: Order picking -->
@@ -499,8 +554,9 @@ button.gold-btn:hover{background:linear-gradient(135deg,#D4A010,var(--gold));box
       </div>
       <ul class="order-list" id="orderList"></ul>
     </div>
-    <div style="text-align:center;margin-top:1rem">
-      <button onclick="goBack()" style="font-size:14px;color:var(--text3);border:1px solid var(--border);background:var(--cream2);padding:10px 20px;border-radius:10px">&#8592; Wapas Jaayein</button>
+    <div style="display:flex;gap:10px;margin-top:4px">
+      <button onclick="goBack()" style="flex:1;padding:12px;border-radius:10px;border:1px solid var(--border);background:var(--cream2);color:var(--text3);font-size:15px">← Satsang Chunein</button>
+      <button onclick="loadOrder()" style="flex:1;padding:12px;border-radius:10px;border:1px solid var(--border);background:var(--cream2);color:var(--text3);font-size:15px">🔄 Refresh</button>
     </div>
   </div>
 
@@ -597,6 +653,7 @@ button.gold-btn:hover{background:linear-gradient(135deg,#D4A010,var(--gold));box
       </div>
     </div>
   </div>
+
 
 </div><!-- end .app -->
 
@@ -1216,6 +1273,13 @@ function showStep(id) {
   document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
 }
+
+
+
+
+
+
+
 
 // Load mala state when page loads
 loadMalaState();
