@@ -23,9 +23,17 @@ body{
 }
 .bg-overlay{
   position:fixed;inset:0;z-index:0;pointer-events:none;
+}
+.bg-overlay::before{
+  content:'';position:absolute;inset:0;
+  background:url('./radha-krishna.jpg') center 20%/cover no-repeat;
+  opacity:0.12;
+}
+.bg-overlay::after{
+  content:'';position:absolute;inset:0;
   background:
-    linear-gradient(180deg,rgba(255,248,238,0.88) 0%,rgba(255,248,238,0.92) 100%),
-    url('./radha-krishna.jpg') center/cover no-repeat;
+    radial-gradient(ellipse at 50% 30%,rgba(255,248,238,0) 0%,rgba(255,248,238,0.7) 70%),
+    linear-gradient(180deg,rgba(255,248,238,0) 0%,rgba(255,248,238,0.5) 100%);
 }
 .header,.devo-banner,.app{position:relative;z-index:1}
 
@@ -73,12 +81,14 @@ body{
 
 /* ─── CARDS ─── */
 .card{
-  background:#fff;
+  background:rgba(255,255,255,0.92);
+  backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px);
   border:1px solid var(--border);
   border-radius:16px;
   padding:1.25rem 1.25rem;
   margin-bottom:1rem;
-  box-shadow:0 2px 12px var(--shadow);
+  box-shadow:0 2px 16px var(--shadow);
   position:relative;overflow:hidden;
 }
 .card::before{
